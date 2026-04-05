@@ -34,7 +34,7 @@ if city != "All":
 if loyalty != "All":
     filtered = filtered[filtered["loyalty_tier"] == loyalty]
 
-# ------------------ SAFE RFM CALCULATION ------------------
+# ------------------ RFM CALCULATION ------------------
 rfm = transactions.groupby("customer_id").agg({
     "days_since_last_purchase": "min",
     "order_id": "count",
@@ -43,7 +43,6 @@ rfm = transactions.groupby("customer_id").agg({
 
 rfm.columns = ["customer_id", "Recency", "Frequency", "Monetary"]
 
-# Safe ranking (no qcut crash)
 rfm["R_score"] = pd.cut(rfm["Recency"], bins=4, labels=[4,3,2,1])
 rfm["F_score"] = pd.cut(rfm["Frequency"], bins=4, labels=[1,2,3,4])
 rfm["M_score"] = pd.cut(rfm["Monetary"], bins=4, labels=[1,2,3,4])
@@ -70,79 +69,74 @@ menu = st.sidebar.radio("Navigation", [
 if menu == "Overview":
     st.header("📊 Overview")
 
-    st.markdown("## 📌 Executive Summary")
-
     high_risk = len(filtered[filtered["trust_score"] < 60])
     avg_trust = round(filtered["trust_score"].mean(), 2)
 
     st.info(f"""
-    - Total Customers: {len(filtered)}
-    - High Risk Customers: {high_risk}
-    - Average Trust Score: {avg_trust}
+    Total Customers: {len(filtered)}  
+    High Risk Customers: {high_risk}  
+    Avg Trust Score: {avg_trust}  
 
-    👉 Customer experience issues are directly impacting trust and retention.
+    👉 Customer experience directly impacts trust and retention.
     """)
 
     col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Customers", len(filtered))
+    col2.metric("Avg Order Value", round(filtered["avg_order_value"].mean(), 2))
+    col3.metric("Avg Trust", avg_trust)
+    col4.metric("High Risk", high_risk)
 
-    col1.metric("👥 Customers", len(filtered))
-    col2.metric("💰 Avg Order Value", round(filtered["avg_order_value"].mean(), 2))
-    col3.metric("⭐ Avg Trust Score", avg_trust)
-    col4.metric("⚠️ High Risk", high_risk)
-
-    fig = px.histogram(filtered, x="avg_order_value", title="Order Value Distribution")
+    fig = px.histogram(filtered, x="avg_order_value")
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("🏆 Top 5 Customers")
-    st.dataframe(filtered.sort_values(by="avg_order_value", ascending=False).head(5))
+    st.markdown("### 💡 Insight")
+    st.write("Higher value customers tend to show higher trust, indicating strong loyalty. Low trust users signal churn risk.")
 
 # ------------------ PROBLEM ANALYSIS ------------------
 elif menu == "Problem Analysis":
     st.header("⚠️ Problem Analysis")
 
-    filtered_tx = transactions[
-        transactions["customer_id"].isin(filtered["customer_id"])
-    ]
+    filtered_tx = transactions[transactions["customer_id"].isin(filtered["customer_id"])]
 
-    st.subheader("🚚 Delivery Status")
-    st.plotly_chart(
-        px.histogram(filtered_tx, x="delivery_status", color="delivery_status"),
-        use_container_width=True
-    )
+    st.subheader("Delivery Status")
+    fig = px.histogram(filtered_tx, x="delivery_status", color="delivery_status")
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("💸 Refund Status")
-    st.plotly_chart(
-        px.histogram(filtered_tx, x="refund_status", color="refund_status"),
-        use_container_width=True
-    )
+    st.markdown("### 💡 Insight")
+    st.write("Delivery failures significantly increase churn risk.")
 
-# ------------------ K-MEANS SEGMENTATION ------------------
+    st.subheader("Refund Status")
+    fig2 = px.histogram(filtered_tx, x="refund_status", color="refund_status")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown("### 💡 Insight")
+    st.write("Refund delays reduce customer trust and repeat purchases.")
+
+# ------------------ CUSTOMER SEGMENTATION ------------------
 elif menu == "Customer Segmentation":
     st.header("👥 K-Means Segmentation")
 
     features = filtered[["avg_order_value", "return_rate", "trust_score"]]
-
     kmeans = KMeans(n_clusters=4, random_state=42)
     filtered["cluster"] = kmeans.fit_predict(features)
 
-    st.plotly_chart(
-        px.scatter(filtered, x="avg_order_value", y="trust_score",
-                   color=filtered["cluster"].astype(str)),
-        use_container_width=True
-    )
+    fig = px.scatter(filtered, x="avg_order_value", y="trust_score", color=filtered["cluster"].astype(str))
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### 💡 Insight")
+    st.write("Customer clusters help in targeted marketing, service prioritization, and retention strategies.")
 
 # ------------------ RFM SEGMENTATION ------------------
 elif menu == "RFM Segmentation":
     st.header("📊 RFM Segmentation")
 
-    st.plotly_chart(
-        px.scatter(rfm, x="Recency", y="Monetary", size="Frequency", color="Monetary"),
-        use_container_width=True
-    )
+    fig = px.scatter(rfm, x="Recency", y="Monetary", size="Frequency", color="Monetary")
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.dataframe(rfm.head(20))
+    st.markdown("### 💡 Insight")
+    st.write("Low recency and high monetary customers are loyal, while high recency users need re-engagement.")
 
-# ------------------ PREDICTIVE ------------------
+# ------------------ PREDICTIVE ANALYTICS ------------------
 elif menu == "Predictive Analytics":
     st.header("🔮 Churn Prediction")
 
@@ -150,19 +144,21 @@ elif menu == "Predictive Analytics":
         lambda x: "High" if x > 0.3 else "Medium" if x > 0.15 else "Low"
     )
 
-    st.plotly_chart(
-        px.histogram(filtered, x="churn_risk", color="churn_risk"),
-        use_container_width=True
-    )
+    fig = px.histogram(filtered, x="churn_risk", color="churn_risk")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### 💡 Insight")
+    st.write("Higher return rates are strong indicators of churn risk.")
 
 # ------------------ TRUST SCORE ------------------
 elif menu == "Trust Score":
     st.header("⭐ Trust Score")
 
-    st.plotly_chart(
-        px.histogram(filtered, x="trust_score", nbins=20),
-        use_container_width=True
-    )
+    fig = px.histogram(filtered, x="trust_score", nbins=20)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### 💡 Insight")
+    st.write("Low trust customers need immediate service recovery.")
 
 # ------------------ CHURN SIMULATOR ------------------
 elif menu == "Churn Simulator":
@@ -177,20 +173,26 @@ elif menu == "Churn Simulator":
     st.metric("Predicted Trust Score", round(score, 2))
     st.write(f"Risk Level: {risk}")
 
+    st.markdown("### 💡 Insight")
+    st.write("Increasing complaints and returns reduces trust and increases churn risk.")
+
 # ------------------ CUSTOMER LOOKUP ------------------
 elif menu == "Customer Lookup":
     st.header("🔍 Customer Lookup")
 
-    cust_id = st.text_input("Enter Customer ID (e.g., C100)")
+    cust_id = st.text_input("Enter Customer ID")
 
     if cust_id:
         result = customers[customers["customer_id"] == cust_id]
 
         if not result.empty:
-            st.success("Customer Found")
             st.dataframe(result)
+
+            st.markdown("### 💡 Insight")
+            st.write("Customer-level insights help in targeted retention strategies.")
+
         else:
-            st.error("Customer not found")
+            st.write("Customer not found")
 
 # ------------------ ACTIONS ------------------
 elif menu == "Actions":
@@ -198,21 +200,25 @@ elif menu == "Actions":
 
     def action(row):
         if row["trust_score"] < 50:
-            return "🚨 Immediate retention action"
+            return "Immediate retention action"
         elif row["trust_score"] < 70:
-            return "⚠️ Offer discount"
+            return "Offer discount"
         else:
-            return "✅ Maintain loyalty"
+            return "Maintain loyalty"
 
     filtered["Action"] = filtered.apply(action, axis=1)
 
     st.dataframe(filtered[["customer_id", "trust_score", "Action"]].head(20))
 
+    st.markdown("### 💡 Insight")
+    st.write("Different customers require different actions based on trust and behavior.")
+
 # ------------------ BUSINESS IMPACT ------------------
 elif menu == "Business Impact":
     st.header("💰 Business Impact")
 
-    st.plotly_chart(
-        px.bar(filtered.head(50), x="customer_id", y="avg_order_value"),
-        use_container_width=True
-    )
+    fig = px.bar(filtered.head(50), x="customer_id", y="avg_order_value")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### 💡 Insight")
+    st.write("High-value customers contribute most revenue, making retention critical.")
