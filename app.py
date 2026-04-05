@@ -10,6 +10,9 @@ st.set_page_config(page_title="Nykaa Dashboard", layout="wide")
 customers = pd.read_csv("nykaa_customers.csv")
 transactions = pd.read_csv("nykaa_transactions.csv")
 
+# ------------------ DATA CLEANING ------------------
+customers["loyalty_tier"] = customers["loyalty_tier"].fillna("No Membership")
+
 # ------------------ TITLE ------------------
 st.markdown("# 💄 Nykaa Smart CX Dashboard")
 st.markdown("### Customer Segmentation + Experience Intelligence System")
@@ -17,8 +20,11 @@ st.markdown("### Customer Segmentation + Experience Intelligence System")
 # ------------------ SIDEBAR FILTERS ------------------
 st.sidebar.header("🔍 Filters")
 
-city = st.sidebar.selectbox("City Tier", ["All"] + list(customers["city_tier"].unique()))
-loyalty = st.sidebar.selectbox("Loyalty Tier", ["All"] + list(customers["loyalty_tier"].unique()))
+city_options = ["All"] + sorted(customers["city_tier"].dropna().unique())
+loyalty_options = ["All"] + sorted(customers["loyalty_tier"].dropna().unique())
+
+city = st.sidebar.selectbox("City Tier", city_options)
+loyalty = st.sidebar.selectbox("Loyalty Tier", loyalty_options)
 
 filtered = customers.copy()
 
@@ -28,7 +34,7 @@ if city != "All":
 if loyalty != "All":
     filtered = filtered[filtered["loyalty_tier"] == loyalty]
 
-# ------------------ RFM CALCULATION ------------------
+# ------------------ SAFE RFM CALCULATION ------------------
 rfm = transactions.groupby("customer_id").agg({
     "days_since_last_purchase": "min",
     "order_id": "count",
@@ -37,14 +43,13 @@ rfm = transactions.groupby("customer_id").agg({
 
 rfm.columns = ["customer_id", "Recency", "Frequency", "Monetary"]
 
-# Scoring
-rfm["R_score"] = pd.qcut(rfm["Recency"], 4, labels=[4,3,2,1])
-rfm["F_score"] = pd.qcut(rfm["Frequency"].rank(method="first"), 4, labels=[1,2,3,4])
-rfm["M_score"] = pd.qcut(rfm["Monetary"], 4, labels=[1,2,3,4])
+# Safe ranking (no qcut crash)
+rfm["R_score"] = pd.cut(rfm["Recency"], bins=4, labels=[4,3,2,1])
+rfm["F_score"] = pd.cut(rfm["Frequency"], bins=4, labels=[1,2,3,4])
+rfm["M_score"] = pd.cut(rfm["Monetary"], bins=4, labels=[1,2,3,4])
 
 rfm["RFM_Score"] = rfm["R_score"].astype(str) + rfm["F_score"].astype(str) + rfm["M_score"].astype(str)
 
-# Merge with customers
 filtered = filtered.merge(rfm, on="customer_id", how="left")
 
 # ------------------ NAVIGATION ------------------
@@ -75,7 +80,7 @@ if menu == "Overview":
     - High Risk Customers: {high_risk}
     - Average Trust Score: {avg_trust}
 
-    👉 Customer experience issues directly impact trust and churn risk.
+    👉 Customer experience issues are directly impacting trust and retention.
     """)
 
     col1, col2, col3, col4 = st.columns(4)
@@ -89,26 +94,29 @@ if menu == "Overview":
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("🏆 Top 5 Customers")
-    top_customers = filtered.sort_values(by="avg_order_value", ascending=False).head(5)
-    st.dataframe(top_customers)
+    st.dataframe(filtered.sort_values(by="avg_order_value", ascending=False).head(5))
 
 # ------------------ PROBLEM ANALYSIS ------------------
 elif menu == "Problem Analysis":
     st.header("⚠️ Problem Analysis")
 
-    filtered_transactions = transactions[
+    filtered_tx = transactions[
         transactions["customer_id"].isin(filtered["customer_id"])
     ]
 
-    st.subheader("🚚 Delivery Failures")
-    fig = px.histogram(filtered_transactions, x="delivery_status", color="delivery_status")
-    st.plotly_chart(fig, use_container_width=True)
+    st.subheader("🚚 Delivery Status")
+    st.plotly_chart(
+        px.histogram(filtered_tx, x="delivery_status", color="delivery_status"),
+        use_container_width=True
+    )
 
-    st.subheader("💸 Refund Issues")
-    fig2 = px.histogram(filtered_transactions, x="refund_status", color="refund_status")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.subheader("💸 Refund Status")
+    st.plotly_chart(
+        px.histogram(filtered_tx, x="refund_status", color="refund_status"),
+        use_container_width=True
+    )
 
-# ------------------ CUSTOMER SEGMENTATION ------------------
+# ------------------ K-MEANS SEGMENTATION ------------------
 elif menu == "Customer Segmentation":
     st.header("👥 K-Means Segmentation")
 
@@ -117,16 +125,20 @@ elif menu == "Customer Segmentation":
     kmeans = KMeans(n_clusters=4, random_state=42)
     filtered["cluster"] = kmeans.fit_predict(features)
 
-    fig = px.scatter(filtered, x="avg_order_value", y="trust_score",
-                     color=filtered["cluster"].astype(str))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        px.scatter(filtered, x="avg_order_value", y="trust_score",
+                   color=filtered["cluster"].astype(str)),
+        use_container_width=True
+    )
 
 # ------------------ RFM SEGMENTATION ------------------
 elif menu == "RFM Segmentation":
     st.header("📊 RFM Segmentation")
 
-    fig = px.scatter(rfm, x="Recency", y="Monetary", size="Frequency", color="Monetary")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        px.scatter(rfm, x="Recency", y="Monetary", size="Frequency", color="Monetary"),
+        use_container_width=True
+    )
 
     st.dataframe(rfm.head(20))
 
@@ -138,15 +150,19 @@ elif menu == "Predictive Analytics":
         lambda x: "High" if x > 0.3 else "Medium" if x > 0.15 else "Low"
     )
 
-    fig = px.histogram(filtered, x="churn_risk", color="churn_risk")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        px.histogram(filtered, x="churn_risk", color="churn_risk"),
+        use_container_width=True
+    )
 
 # ------------------ TRUST SCORE ------------------
 elif menu == "Trust Score":
     st.header("⭐ Trust Score")
 
-    fig = px.histogram(filtered, x="trust_score", nbins=20)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        px.histogram(filtered, x="trust_score", nbins=20),
+        use_container_width=True
+    )
 
 # ------------------ CHURN SIMULATOR ------------------
 elif menu == "Churn Simulator":
@@ -158,28 +174,29 @@ elif menu == "Churn Simulator":
     score = 100 - (return_rate * 100) - (complaints * 5)
     risk = "High" if score < 50 else "Medium" if score < 70 else "Low"
 
-    st.metric("Trust Score", round(score, 2))
+    st.metric("Predicted Trust Score", round(score, 2))
     st.write(f"Risk Level: {risk}")
 
 # ------------------ CUSTOMER LOOKUP ------------------
 elif menu == "Customer Lookup":
     st.header("🔍 Customer Lookup")
 
-    cust_id = st.text_input("Enter Customer ID")
+    cust_id = st.text_input("Enter Customer ID (e.g., C100)")
 
     if cust_id:
         result = customers[customers["customer_id"] == cust_id]
 
         if not result.empty:
+            st.success("Customer Found")
             st.dataframe(result)
         else:
-            st.write("Not found")
+            st.error("Customer not found")
 
 # ------------------ ACTIONS ------------------
 elif menu == "Actions":
     st.header("🎯 Recommended Actions")
 
-    def get_action(row):
+    def action(row):
         if row["trust_score"] < 50:
             return "🚨 Immediate retention action"
         elif row["trust_score"] < 70:
@@ -187,13 +204,15 @@ elif menu == "Actions":
         else:
             return "✅ Maintain loyalty"
 
-    filtered["action"] = filtered.apply(get_action, axis=1)
+    filtered["Action"] = filtered.apply(action, axis=1)
 
-    st.dataframe(filtered[["customer_id", "trust_score", "action"]].head(20))
+    st.dataframe(filtered[["customer_id", "trust_score", "Action"]].head(20))
 
 # ------------------ BUSINESS IMPACT ------------------
 elif menu == "Business Impact":
     st.header("💰 Business Impact")
 
-    fig = px.bar(filtered.head(50), x="customer_id", y="avg_order_value")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        px.bar(filtered.head(50), x="customer_id", y="avg_order_value"),
+        use_container_width=True
+    )
